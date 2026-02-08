@@ -1,0 +1,50 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: platform-provisioner
+rules:
+  # Namespace lifecycle
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+
+  # Core resources inside store namespaces
+  - apiGroups: [""]
+    resources:
+      - pods
+      - services
+      - persistentvolumeclaims
+      - secrets
+      - configmaps
+    verbs: ["create", "get", "list", "watch", "delete"]
+
+  # Workloads
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+    verbs: ["create", "get", "list", "watch", "delete"]
+
+  # Ingress
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+
+  # 🔥 THIS WAS MISSING (ROOT CAUSE)
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: platform-provisioner-binding
+subjects:
+  - kind: ServiceAccount
+    name: backend-sa
+    namespace: store-platform
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: platform-provisioner
