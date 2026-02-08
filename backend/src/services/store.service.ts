@@ -1,55 +1,18 @@
-// import { coreV1Api } from "../utils/k8sClient";
-// import { V1Namespace } from "@kubernetes/client-node";
-
-// export async function createStoreNamespace(storeId: string) {
-//   const namespaceName = `store-${storeId}`;
-
-//   const namespace: V1Namespace = {
-//     metadata: {
-//       name: namespaceName,
-//       labels: {
-//         "app.kubernetes.io/managed-by": "store-provisioning-platform",
-//         "store-id": storeId,
-//       },
-//     },
-//   };
-
-//  await coreV1Api.createNamespace({
-//   body: namespace,
-// });
-
-//   return namespaceName;
-// }
-
-// export async function deleteStoreNamespace(storeId: string) {
-//   const namespaceName = `store-${storeId}`;
-
-//   try {
-//     await coreV1Api.deleteNamespace({
-//         name: namespaceName,
-//     });
-//     return true;
-//   } catch (err: any) {
-//     // Idempotency: deleting an already-deleted namespace should not fail
-//     if (err?.response?.statusCode === 404) {
-//       return true;
-//     }
-//     throw err;
-//   }
-// }
 import { v4 as uuidv4 } from "uuid";
 import { coreV1Api } from "../utils/k8sClient";
 import { HelmService } from "./helm.service";
-import { pool } from "../db";
+import { pool } from "../utils/db";
+
+export type StoreStatus = "provisioning" | "ready" | "failed" | "deleted";
 
 export interface Store {
   storeId: string;
   storeName: string;
   namespace: string;
-  status: "provisioning" | "ready" | "failed" | "deleted";
+  status: StoreStatus;
   url?: string;
   createdAt: Date;
-  deletedAt?: Date | null;
+  deletedAt?: Date;
 }
 
 export class StoreService {
@@ -58,52 +21,48 @@ export class StoreService {
   constructor() {
     this.helmService = new HelmService();
 
-    try {
-      this.helmService.addBitnamiRepo();
-    } catch (error) {
-      console.warn("⚠️ Bitnami repo already exists or failed to add");
-    }
+    // 🔁 Reconciliation loop (CRITICAL)
+    setInterval(() => {
+      this.reconcileProvisioning().catch((err) =>
+        console.error("Reconciliation error", err)
+      );
+    }, 5000);
   }
 
   /**
-   * Create a new store (DB-first, async provisioning)
+   * CREATE STORE (DB is source of truth)
    */
   async createStore(storeName: string): Promise<Store> {
     const storeId = uuidv4().split("-")[0];
     const namespace = `store-${storeId}`;
     const url = `http://store-${storeId}.localhost:8080`;
 
-    const result = await pool.query(
+    const { rows } = await pool.query(
       `
       INSERT INTO stores (store_id, store_name, namespace, status, url)
-      VALUES ($1, $2, $3, $4, $5)
+      VALUES ($1, $2, $3, 'provisioning', $4)
       RETURNING *
       `,
-      [storeId, storeName, namespace, "provisioning", url]
+      [storeId, storeName, namespace, url]
     );
 
-    const store = this.mapRow(result.rows[0]);
+    const store = rows[0];
 
-    // Provision asynchronously
-    this.provisionStore(store).catch(async (err) => {
-      console.error(`❌ Provisioning failed for ${storeId}`, err);
-      await pool.query(
-        `UPDATE stores SET status = 'failed' WHERE store_id = $1`,
-        [storeId]
-      );
+    // 🚀 Fire-and-forget provisioning
+    this.provisionStore(store).catch((err) => {
+      console.error(`Provisioning error for ${store.store_id}`, err);
+      // ❗ DO NOT mark failed here — reconciliation will decide
     });
 
     return store;
   }
 
   /**
-   * Provision store infra (namespace + Helm)
+   * PROVISION STORE (NO premature failure)
    */
   private async provisionStore(store: Store): Promise<void> {
+    // Namespace is idempotent
     try {
-      console.log(`🚀 Provisioning store ${store.storeId}`);
-
-      // 1. Create namespace
       await coreV1Api.createNamespace({
         body: {
           metadata: {
@@ -115,97 +74,96 @@ export class StoreService {
           },
         },
       });
+    } catch (err: any) {
+      if (err?.body?.reason !== "AlreadyExists") {
+        throw err;
+      }
+    }
 
-      // 2. Install WooCommerce via Helm
-      await this.helmService.installWordPress({
-        storeId: store.storeId,
-        storeName: store.storeName,
-        chartName: "bitnami/wordpress",
-        namespace: store.namespace,
-      });
+    await this.helmService.installWordPress({
+      storeId: store.storeId,
+      storeName: store.storeName,
+      namespace: store.namespace,
+    });
+  }
 
-      // 3. Mark READY
-      await pool.query(
-        `UPDATE stores SET status = 'ready' WHERE store_id = $1`,
-        [store.storeId]
+  /**
+   * 🔁 RECONCILIATION LOOP
+   * Helm is the truth, DB follows
+   */
+  private async reconcileProvisioning(): Promise<void> {
+    const { rows } = await pool.query(
+      "SELECT * FROM stores WHERE status = 'provisioning'"
+    );
+
+    for (const store of rows) {
+      const helmStatus = this.helmService.getHelmStatus(
+        store.store_id,
+        store.namespace
       );
 
-      console.log(`✅ Store ${store.storeId} READY`);
-    } catch (err) {
-      console.error(`❌ Provisioning error for ${store.storeId}`, err);
+      if (helmStatus === "deployed") {
+        await pool.query(
+          "UPDATE stores SET status='ready' WHERE store_id=$1",
+          [store.store_id]
+        );
+      }
 
-      await pool.query(
-        `UPDATE stores SET status = 'failed' WHERE store_id = $1`,
-        [store.storeId]
-      );
-
-      throw err;
+      if (helmStatus === "failed") {
+        await pool.query(
+          "UPDATE stores SET status='failed' WHERE store_id=$1",
+          [store.store_id]
+        );
+      }
     }
   }
 
   /**
-   * List all stores
+   * LIST STORES
    */
   async getStores(): Promise<Store[]> {
-    const result = await pool.query(
-      `SELECT * FROM stores ORDER BY created_at DESC`
+    const { rows } = await pool.query(
+      `
+      SELECT *
+      FROM stores
+      WHERE status != 'deleted'
+      ORDER BY created_at DESC
+      `
     );
-    return result.rows.map(this.mapRow);
+    return rows;
   }
 
   /**
-   * Get store by ID
+   * GET SINGLE STORE
    */
   async getStore(storeId: string): Promise<Store | null> {
-    const result = await pool.query(
-      `SELECT * FROM stores WHERE store_id = $1`,
+    const { rows } = await pool.query(
+      "SELECT * FROM stores WHERE store_id=$1",
       [storeId]
     );
-    return result.rows[0] ? this.mapRow(result.rows[0]) : null;
+    return rows[0] ?? null;
   }
 
   /**
-   * Delete store (Helm uninstall + namespace delete)
+   * DELETE STORE (CLEAN TEARDOWN)
    */
   async deleteStore(storeId: string): Promise<void> {
-    const result = await pool.query(
-      `SELECT * FROM stores WHERE store_id = $1`,
-      [storeId]
-    );
+    const store = await this.getStore(storeId);
+    if (!store) throw new Error("Store not found");
 
-    if (!result.rows[0]) {
-      throw new Error(`Store ${storeId} not found`);
-    }
+    await this.helmService.uninstallWordPress(storeId, store.namespace);
 
-    const store = this.mapRow(result.rows[0]);
-
-    await this.helmService.uninstallWordPress(store.storeId, store.namespace);
-    await coreV1Api.deleteNamespace({ name: store.namespace });
+    await coreV1Api.deleteNamespace({
+      name: store.namespace,
+    });
 
     await pool.query(
       `
       UPDATE stores
-      SET status = 'deleted', deleted_at = NOW()
-      WHERE store_id = $1
+      SET status='deleted', deleted_at=NOW()
+      WHERE store_id=$1
       `,
       [storeId]
     );
-
-    console.log(`🗑️ Store ${storeId} deleted`);
-  }
-
-  /**
-   * DB row → Store object
-   */
-  private mapRow(row: any): Store {
-    return {
-      storeId: row.store_id,
-      storeName: row.store_name,
-      namespace: row.namespace,
-      status: row.status,
-      url: row.url,
-      createdAt: row.created_at,
-      deletedAt: row.deleted_at,
-    };
   }
 }

@@ -1,38 +1,3 @@
-// import express from 'express';
-// import cors from 'cors';
-// import helmet from 'helmet';
-// import dotenv from 'dotenv';
-// import storeRoutes from './routes/store.routes';
-// import k8sRoutes from './routes/k8s.routes';
-
-// dotenv.config();
-
-// const app = express();
-// const PORT = process.env.PORT || 3001;
-
-// // Middleware
-// app.use(helmet());
-// app.use(cors());
-// app.use(express.json());
-
-// // Health check
-// app.get('/health', (req, res) => {
-//   res.json({
-//     status: 'ok',
-//     service: 'store-provisioning-backend',
-//     timestamp: new Date().toISOString(),
-//   });
-// });
-
-// // Routes
-// app.use('/api/stores', storeRoutes);
-// app.use('/api/k8s', k8sRoutes);
-
-// app.listen(PORT, () => {
-//   console.log(`🚀 Backend API running on http://localhost:${PORT}`);
-//   console.log(`📊 Health check: http://localhost:${PORT}/health`);
-// });
-
 import { Router, Request, Response } from 'express';
 import { StoreService } from '../services/store.service';
 
@@ -67,26 +32,40 @@ router.post('/', async (req: Request, res: Response) => {
 });
 
 /**
- * List all stores
+ * ✅ List all stores (FIXED)
  */
-router.get('/', (req: Request, res: Response) => {
-  const stores = storeService.getStores();
-  res.json({ count: stores.length, stores });
+router.get('/', async (req: Request, res: Response) => {
+  try {
+    const stores = await storeService.getStores(); // 🔥 await was missing
+
+    res.json({
+      count: stores.length,
+      stores,
+    });
+  } catch (error) {
+    console.error('Error listing stores:', error);
+    res.status(500).json({ error: 'Failed to list stores' });
+  }
 });
 
 /**
- * Get a specific store
+ * ✅ Get a specific store (FIXED)
  */
-router.get('/:storeId', (req: Request, res: Response) => {
-  const storeId = req.params.storeId as string;
+router.get('/:storeId', async (req: Request, res: Response) => {
+  try {
+    const storeId = req.params.storeId as string;
 
-  const store = storeService.getStore(storeId);
+    const store = await storeService.getStore(storeId); // 🔥 await was missing
 
-  if (!store) {
-    return res.status(404).json({ error: 'Store not found' });
+    if (!store) {
+      return res.status(404).json({ error: 'Store not found' });
+    }
+
+    res.json(store);
+  } catch (error) {
+    console.error('Error fetching store:', error);
+    res.status(500).json({ error: 'Failed to fetch store' });
   }
-
-  res.json(store);
 });
 
 /**
