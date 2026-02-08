@@ -7,8 +7,16 @@ rules:
   - apiGroups: [""]
     resources: ["namespaces"]
     verbs: ["create", "get", "list", "watch", "delete"]
-
+  # Allow Helm to manage NetworkPolicies for store charts
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch"]
   # Core resources inside store namespaces
+  # Allow Helm charts to manage PodDisruptionBudgets
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+
   - apiGroups: [""]
     resources:
       - pods
@@ -16,6 +24,7 @@ rules:
       - persistentvolumeclaims
       - secrets
       - configmaps
+      - serviceaccounts
     verbs: ["create", "get", "list", "watch", "delete"]
 
   # Workloads

@@ -7,6 +7,11 @@ global:
   storageClass: local-path
 
 backend:
+  env:
+    NODE_ENV: development
+    PORT: "3001"
+    DATABASE_URL: "postgresql://platform:platform123@postgres.store-platform.svc.cluster.local:5432/platform_db"
+    DB_SSL: "false"
   replicaCount: 1
   image:
     repository: store-backend
