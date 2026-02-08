@@ -1,0 +1,16 @@
+namespace:
+  name: store-platform
+
+global:
+  environment: local
+  domain: localhost
+  storageClass: local-path
+
+backend:
+  replicaCount: 1
+  image:
+    repository: store-backend
+    tag: latest
+    pullPolicy: Never
+postgres:
+  database: platform_db

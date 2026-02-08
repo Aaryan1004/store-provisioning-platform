@@ -1,0 +1,43 @@
+replicaCount: 1
+
+image:
+  repository: store-provisioning-backend
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 3001
+
+ingress:
+  enabled: true
+  className: traefik
+  host: api.localhost
+  path: /
+  pathType: Prefix
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 1024Mi
+
+env:
+  NODE_ENV: development
+  PORT: "3001"
+
+rbac:
+  enabled: true
+
+autoscaling:
+  enabled: false
+
+  minReplicas: 1
+  maxReplicas: 3
+
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+postgres:
+  database: platform_db

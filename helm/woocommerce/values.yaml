@@ -1,0 +1,29 @@
+wordpressUsername: admin
+wordpressPassword: admin123
+wordpressEmail: admin@example.com
+wordpressFirstName: Admin
+wordpressLastName: User
+wordpressBlogName: Demo Woo Store
+
+service:
+  type: ClusterIP
+
+ingress:
+  enabled: true
+  ingressClassName: traefik
+  hostname: store.localhost
+
+mariadb:
+  enabled: true
+  auth:
+    rootPassword: root123
+    password: wp123
+    database: bitnami_wordpress
+
+extraEnvVars:
+  - name: WORDPRESS_PLUGINS
+    value: "woocommerce"
+
+persistence:
+  enabled: true
+  size: 5Gi
