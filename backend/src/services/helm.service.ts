@@ -15,19 +15,48 @@ export interface HelmInstallConfig {
 
 export class HelmService {
   private valuesDir = "/tmp/helm-values";
+  private repoInitialized = false;
 
   constructor() {
     fs.mkdirSync(this.valuesDir, { recursive: true });
   }
 
-  /* ----------------------------- helpers ----------------------------- */
+  /* ---------------- HELM REPO BOOTSTRAP (CRITICAL FIX) ---------------- */
+  private async ensureBitnamiRepo(): Promise<void> {
+    if (this.repoInitialized) return;
 
+    console.log("📦 Ensuring Bitnami Helm repo exists...");
+
+    try {
+      // Check if repo already exists
+      const { stdout } = await execAsync("helm repo list");
+      
+      if (!stdout.includes("bitnami")) {
+        console.log("📦 Adding Bitnami Helm repository...");
+        await execAsync(
+          "helm repo add bitnami https://charts.bitnami.com/bitnami"
+        );
+      } else {
+        console.log("📦 Bitnami repo already present");
+      }
+
+      // Always update (safe + demo reliable)
+      await execAsync("helm repo update");
+      console.log("✅ Bitnami repo ready");
+
+      this.repoInitialized = true;
+    } catch (err) {
+      console.error("❌ Failed to setup Helm repo:", err);
+      throw err;
+    }
+  }
+
+  /* ---------------- PASSWORD HELPER ---------------- */
   private generatePassword(len = 16): string {
     return randomBytes(len).toString("base64").slice(0, len);
   }
 
-  /* ----------------------- values generation -------------------------- */
-
+  /* ---------------- VALUES GENERATION ---------------- */
   private generateWooCommerceValues(storeId: string, storeName: string) {
     return {
       wordpressBlogName: storeName,
@@ -47,6 +76,7 @@ export class HelmService {
         type: "ClusterIP",
       },
 
+      // Disable network policies (RBAC safe)
       networkPolicy: { enabled: false },
 
       mariadb: {
@@ -74,13 +104,17 @@ export class HelmService {
     };
   }
 
-  /* ------------------------- install store ---------------------------- */
-
+  /* ---------------- INSTALL STORE (FINAL) ---------------- */
   async installWordPress({
     storeId,
     storeName,
     namespace,
   }: HelmInstallConfig): Promise<void> {
+    console.log(`🚀 Installing store ${storeId}`);
+
+    // 🔥 CRITICAL: Ensure repo inside container
+    await this.ensureBitnamiRepo();
+
     const values = this.generateWooCommerceValues(storeId, storeName);
     const valuesPath = path.join(this.valuesDir, `store-${storeId}.yaml`);
 
@@ -94,8 +128,6 @@ helm install store-${storeId} bitnami/wordpress \
   --wait \
   --timeout 10m
 `.trim();
-
-    console.log(`🚀 Installing store ${storeId}`);
 
     try {
       const { stdout, stderr } = await execAsync(cmd);
@@ -111,31 +143,21 @@ helm install store-${storeId} bitnami/wordpress \
     }
   }
 
-  /* ------------------------- uninstall store -------------------------- */
-
+  /* ---------------- UNINSTALL ---------------- */
   async uninstallWordPress(
     storeId: string,
     namespace: string
   ): Promise<void> {
     try {
       console.log(`🗑️ Uninstalling store ${storeId}`);
-      await execAsync(
-        `helm uninstall store-${storeId} -n ${namespace}`
-      );
+      await execAsync(`helm uninstall store-${storeId} -n ${namespace}`);
       console.log(`✅ Store ${storeId} uninstalled`);
-    } catch (err) {
-      console.warn(
-        `⚠️ Helm uninstall failed (ignored) for store ${storeId}`
-      );
+    } catch {
+      console.warn(`⚠️ Helm uninstall ignored for ${storeId}`);
     }
   }
 
-  /* ------------------------- helm status ------------------------------ */
-
-  /**
-   * Returns:
-   * deployed | failed | pending-install | pending-upgrade | not-found
-   */
+  /* ---------------- HELM STATUS ---------------- */
   async getHelmStatus(
     storeId: string,
     namespace: string
@@ -144,7 +166,6 @@ helm install store-${storeId} bitnami/wordpress \
       const { stdout } = await execAsync(
         `helm status store-${storeId} -n ${namespace} -o json`
       );
-
       const parsed = JSON.parse(stdout);
       return parsed?.info?.status ?? "unknown";
     } catch {
