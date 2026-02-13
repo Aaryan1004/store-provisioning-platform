@@ -3,20 +3,22 @@ kind: ClusterRole
 metadata:
   name: platform-provisioner
 rules:
+  # ----------------------------
   # Namespace lifecycle
+  # ----------------------------
   - apiGroups: [""]
-    resources: ["namespaces"]
-    verbs: ["create", "get", "list", "watch", "delete"]
-  # Allow Helm to manage NetworkPolicies for store charts
-  - apiGroups: ["networking.k8s.io"]
-    resources: ["networkpolicies"]
-    verbs: ["get", "list", "watch"]
-  # Core resources inside store namespaces
-  # Allow Helm charts to manage PodDisruptionBudgets
-  - apiGroups: ["policy"]
-    resources: ["poddisruptionbudgets"]
-    verbs: ["create", "get", "list", "watch", "delete"]
+    resources:
+      - namespaces
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - delete
 
+  # ----------------------------
+  # Core resources
+  # ----------------------------
   - apiGroups: [""]
     resources:
       - pods
@@ -25,16 +27,84 @@ rules:
       - secrets
       - configmaps
       - serviceaccounts
-    verbs: ["create", "get", "list", "watch", "delete"]
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - delete
+      - patch
+      - update
 
+  # ----------------------------
   # Workloads
+  # ----------------------------
   - apiGroups: ["apps"]
     resources:
       - deployments
       - statefulsets
-    verbs: ["create", "get", "list", "watch", "delete"]
+      - replicasets
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - delete
+      - patch
+      - update
 
+  # ----------------------------
   # Ingress
+  # ----------------------------
   - apiGroups: ["networking.k8s.io"]
-    resources: ["ingresses"]
-    verbs: ["create", "get", "list", "watch", "delete"]
+    resources:
+      - ingresses
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - delete
+      - patch
+      - update
+
+  # ----------------------------
+  # Network Policies (Bitnami charts use these)
+  # ----------------------------
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - networkpolicies
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - delete
+      - patch
+      - update
+
+  # ----------------------------
+  # Pod Disruption Budgets
+  # ----------------------------
+  - apiGroups: ["policy"]
+    resources:
+      - poddisruptionbudgets
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - delete
+      - patch
+      - update
+
+  # ----------------------------
+  # Events (optional but useful for debugging)
+  # ----------------------------
+  - apiGroups: [""]
+    resources:
+      - events
+    verbs:
+      - get
+      - list
+      - watch

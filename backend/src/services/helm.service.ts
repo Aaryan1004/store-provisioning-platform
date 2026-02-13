@@ -1,8 +1,11 @@
-import { execSync } from "child_process";
+import { exec } from "child_process";
+import { promisify } from "util";
 import * as fs from "fs";
 import * as path from "path";
 import { randomBytes } from "crypto";
 import yaml from "js-yaml";
+
+const execAsync = promisify(exec);
 
 export interface HelmInstallConfig {
   storeId: string;
@@ -25,7 +28,7 @@ export class HelmService {
 
   /* ----------------------- values generation -------------------------- */
 
-  generateWooCommerceValues(storeId: string, storeName: string) {
+  private generateWooCommerceValues(storeId: string, storeName: string) {
     return {
       wordpressBlogName: storeName,
       wordpressUsername: "admin",
@@ -44,7 +47,6 @@ export class HelmService {
         type: "ClusterIP",
       },
 
-      /* 🔒 Explicitly disable policies that require extra RBAC */
       networkPolicy: { enabled: false },
 
       mariadb: {
@@ -94,36 +96,57 @@ helm install store-${storeId} bitnami/wordpress \
 `.trim();
 
     console.log(`🚀 Installing store ${storeId}`);
-    execSync(cmd, { stdio: "inherit" });
-    console.log(`✅ Store ${storeId} installed`);
+
+    try {
+      const { stdout, stderr } = await execAsync(cmd);
+
+      if (stdout) console.log(stdout);
+      if (stderr) console.error(stderr);
+
+      console.log(`✅ Store ${storeId} installed`);
+    } catch (err: any) {
+      console.error(`❌ Helm install failed for ${storeId}`);
+      console.error(err?.stderr || err);
+      throw err;
+    }
   }
 
   /* ------------------------- uninstall store -------------------------- */
 
-  async uninstallWordPress(storeId: string, namespace: string): Promise<void> {
+  async uninstallWordPress(
+    storeId: string,
+    namespace: string
+  ): Promise<void> {
     try {
-      execSync(`helm uninstall store-${storeId} -n ${namespace}`, {
-        stdio: "inherit",
-      });
-    } catch {
-      // ignore – namespace deletion will clean up anyway
+      console.log(`🗑️ Uninstalling store ${storeId}`);
+      await execAsync(
+        `helm uninstall store-${storeId} -n ${namespace}`
+      );
+      console.log(`✅ Store ${storeId} uninstalled`);
+    } catch (err) {
+      console.warn(
+        `⚠️ Helm uninstall failed (ignored) for store ${storeId}`
+      );
     }
   }
 
   /* ------------------------- helm status ------------------------------ */
 
   /**
-   * Returns: deployed | failed | pending-install | not-found
+   * Returns:
+   * deployed | failed | pending-install | pending-upgrade | not-found
    */
-  getHelmStatus(storeId: string, namespace: string): string {
+  async getHelmStatus(
+    storeId: string,
+    namespace: string
+  ): Promise<string> {
     try {
-      const output = execSync(
-        `helm status store-${storeId} -n ${namespace} -o json`,
-        { encoding: "utf-8" }
+      const { stdout } = await execAsync(
+        `helm status store-${storeId} -n ${namespace} -o json`
       );
 
-      const parsed = JSON.parse(output);
-      return parsed.info?.status ?? "unknown";
+      const parsed = JSON.parse(stdout);
+      return parsed?.info?.status ?? "unknown";
     } catch {
       return "not-found";
     }
